@@ -1,8 +1,13 @@
 package com.scantowercell
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.WebResourceError
@@ -28,6 +33,8 @@ class OduLoginActivity : AppCompatActivity() {
     private lateinit var statusLine: TextView
     private var baseUrl: String = ""
     private var captured: Boolean = false
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var cm: ConnectivityManager? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,8 +66,11 @@ class OduLoginActivity : AppCompatActivity() {
         val reload = Button(this).apply {
             text = "Retry"
             setOnClickListener {
-                statusLine.text = "Reloading $baseUrl…"
-                webView.loadUrl(baseUrl)
+                statusLine.text = "Reconnecting…"
+                webView.stopLoading()
+                webView.clearCache(true)
+                releaseNetwork()
+                bindToWifiThenLoad()
             }
         }
         val cancel = Button(this).apply {
@@ -96,7 +106,51 @@ class OduLoginActivity : AppCompatActivity() {
         setContentView(root, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        webView.loadUrl(baseUrl)
+        statusLine.text = "Looking for your ODU on WiFi…"
+        bindToWifiThenLoad()
+    }
+
+    /**
+     * Pin the process to the active WiFi network before loading. If Android
+     * has flagged the ODU WiFi as "no internet", app traffic is otherwise
+     * routed over cellular and the ODU becomes unreachable (which surfaces
+     * as ERR_CACHE_MISS inside the WebView).
+     */
+    @Suppress("DEPRECATION") // bindProcessToNetwork works on API 23+
+    private fun bindToWifiThenLoad() {
+        val mgr = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE)
+                as? ConnectivityManager
+        cm = mgr
+        if (mgr == null) {
+            webView.loadUrl(baseUrl)
+            return
+        }
+        val req = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                try { mgr.bindProcessToNetwork(network) } catch (_: Exception) {}
+                runOnUiThread {
+                    statusLine.text = "Loading $baseUrl via WiFi…"
+                    webView.loadUrl(baseUrl)
+                }
+            }
+            override fun onUnavailable() {
+                runOnUiThread {
+                    statusLine.text = "No WiFi network found. Join the ODU's WiFi first, then tap Retry."
+                }
+            }
+        }
+        networkCallback = cb
+        try {
+            mgr.requestNetwork(req, cb)
+        } catch (e: Exception) {
+            // Fallback: just load without pinning. Will likely fail if the
+            // OS routes LAN traffic over cellular, but better than nothing.
+            webView.loadUrl(baseUrl)
+        }
     }
 
     override fun onBackPressed() {
@@ -134,6 +188,20 @@ class OduLoginActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         webView.removeCallbacks(sessionProbe)
+    }
+
+    override fun onDestroy() {
+        releaseNetwork()
+        super.onDestroy()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun releaseNetwork() {
+        try { cm?.bindProcessToNetwork(null) } catch (_: Exception) {}
+        networkCallback?.let {
+            try { cm?.unregisterNetworkCallback(it) } catch (_: Exception) {}
+        }
+        networkCallback = null
     }
 
     private val sessionProbe = object : Runnable {

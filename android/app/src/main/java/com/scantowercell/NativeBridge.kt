@@ -29,7 +29,7 @@ class NativeBridge(
     private val onOpenOduLogin: (String) -> Unit,
 ) {
     private val scanner = CellScanner(app)
-    val oduScanner = OduScanner()
+    val oduScanner = OduScanner(app)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val liveRunning = AtomicBoolean(false)
     private var liveTicker: Runnable? = null

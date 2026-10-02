@@ -1,5 +1,9 @@
 package com.scantowercell
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.util.Log
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -24,10 +28,22 @@ import java.util.concurrent.atomic.AtomicReference
  * the sessionId that gets attached to authenticated calls. Once we have it,
  * we poll the serving-cell endpoint directly from native code.
  */
-class OduScanner {
+class OduScanner(private val appContext: Context? = null) {
     private val session = AtomicReference<Session?>(null)
     @Volatile var lastError: String? = null
         private set
+
+    /** Find a WiFi Network, if any — used to pin HTTP calls to the LAN. */
+    private fun findWifiNetwork(): Network? {
+        val ctx = appContext ?: return null
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE)
+                as? ConnectivityManager ?: return null
+        for (n in cm.allNetworks) {
+            val caps = cm.getNetworkCapabilities(n) ?: continue
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return n
+        }
+        return null
+    }
 
     data class Session(val baseUrl: String, val sessionId: String, val capturedAtMs: Long)
 
@@ -104,7 +120,12 @@ class OduScanner {
             put("sessionId", sessionId)
         }.toString().toByteArray(Charsets.UTF_8)
 
-        val conn = (url.openConnection() as HttpURLConnection).apply {
+        // Pin this request to a WiFi network when we can — avoids the OS
+        // routing LAN traffic over cellular when the ODU WiFi has no
+        // internet access.
+        val wifi = findWifiNetwork()
+        val raw = if (wifi != null) wifi.openConnection(url) else url.openConnection()
+        val conn = (raw as HttpURLConnection).apply {
             connectTimeout = 8000
             readTimeout = 8000
             requestMethod = "POST"
