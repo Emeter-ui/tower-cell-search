@@ -76,6 +76,7 @@ class MainActivity : AppCompatActivity() {
                 )
             },
             hasPermission = ::hasPermission,
+            onOpenOduLogin = { url -> OduLoginActivity.start(this, url) },
         )
         webView.addJavascriptInterface(bridge, "AndroidCellBridge")
 
@@ -83,6 +84,19 @@ class MainActivity : AppCompatActivity() {
 
         // Load the PWA via the virtual https origin served by WebViewAssetLoader.
         webView.loadUrl("https://appassets.androidplatform.net/assets/pwa/index.html")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // If the user just returned from OduLoginActivity, pick up the
+        // captured session and poke the PWA to refresh its ODU status.
+        bridge.drainOduSessionIfAny()
+        webView.post {
+            webView.evaluateJavascript(
+                "window.__cellBridgeEvent && window.__cellBridgeEvent('{}');",
+                null
+            )
+        }
     }
 
     override fun onDestroy() {

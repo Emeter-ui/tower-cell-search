@@ -1,13 +1,14 @@
 import type { TabId } from "../App";
 
 const TABS: { id: TabId; label: string; glyph: string }[] = [
-  { id: "dashboard", label: "Dashboard", glyph: "▣" },
+  { id: "dashboard", label: "Dash", glyph: "▣" },
   { id: "scan", label: "Scan", glyph: "⟳" },
   { id: "cells", label: "Cells", glyph: "▦" },
   { id: "live", label: "Live", glyph: "●" },
-  { id: "history", label: "History", glyph: "⌛" },
+  { id: "odu", label: "ODU", glyph: "⬒" },
+  { id: "history", label: "Log", glyph: "⌛" },
   { id: "tools", label: "Tools", glyph: "⚙" },
-  { id: "settings", label: "Settings", glyph: "✎" },
+  { id: "settings", label: "Set", glyph: "✎" },
 ];
 
 export function BottomNav({
@@ -20,7 +21,7 @@ export function BottomNav({
   return (
     <nav
       className="sticky bottom-0 z-20 border-t border-line bg-bg/95 backdrop-blur
-        grid grid-cols-7 gap-0.5 px-1 pt-1 pb-[max(env(safe-area-inset-bottom),0.25rem)]"
+        grid grid-cols-8 gap-0.5 px-1 pt-1 pb-[max(env(safe-area-inset-bottom),0.25rem)]"
     >
       {TABS.map((t) => {
         const on = active === t.id;

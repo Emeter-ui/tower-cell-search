@@ -2,7 +2,12 @@
 // `AndroidCellBridge`. The Kotlin side returns JSON strings (safer across the
 // WebView boundary than complex objects); we parse here.
 
-import type { BridgeStatus, ScanResult, SubscriptionInfo } from "./types";
+import type {
+  BridgeStatus,
+  OduStatus,
+  ScanResult,
+  SubscriptionInfo,
+} from "./types";
 
 type RawBridge = {
   status(): string;
@@ -12,6 +17,11 @@ type RawBridge = {
   startLive(subIdOrNegative: number, intervalMs: number): void;
   stopLive(): void;
   requestNetworkScan(subIdOrNegative: number): string; // best-effort; returns error payload when denied
+  // --- ODU (ZLT X17U) ---
+  oduStatus(): string;
+  oduOpenLogin(url: string): void;
+  oduScanOnce(): string; // throws by returning {"error":"..."} when not logged in
+  oduClearSession(): void;
 };
 
 declare global {
@@ -36,6 +46,10 @@ export interface NativeBridge {
     intervalMs: number;
     onSample: (r: ScanResult) => void;
   }): () => void;
+  oduStatus(): Promise<OduStatus>;
+  oduOpenLogin(url: string): void;
+  oduScanOnce(): Promise<ScanResult>;
+  oduClearSession(): Promise<void>;
 }
 
 class RealBridge implements NativeBridge {
@@ -79,6 +93,20 @@ class RealBridge implements NativeBridge {
       window.__cellLive = undefined;
     };
   }
+  async oduStatus(): Promise<OduStatus> {
+    return JSON.parse(this.raw.oduStatus()) as OduStatus;
+  }
+  oduOpenLogin(url: string): void {
+    this.raw.oduOpenLogin(url);
+  }
+  async oduScanOnce(): Promise<ScanResult> {
+    const parsed = JSON.parse(this.raw.oduScanOnce());
+    if (parsed && typeof parsed.error === "string") throw new Error(parsed.error);
+    return parsed as ScanResult;
+  }
+  async oduClearSession(): Promise<void> {
+    this.raw.oduClearSession();
+  }
 }
 
 class AbsentBridge implements NativeBridge {
@@ -101,6 +129,24 @@ class AbsentBridge implements NativeBridge {
   }
   startLive() {
     return () => {};
+  }
+  async oduStatus(): Promise<OduStatus> {
+    return {
+      configured: false,
+      loggedIn: false,
+      url: null,
+      sessionAgeMs: null,
+      lastError: this.reason,
+    };
+  }
+  oduOpenLogin() {
+    /* no-op */
+  }
+  async oduScanOnce(): Promise<ScanResult> {
+    throw new Error(this.reason);
+  }
+  async oduClearSession(): Promise<void> {
+    /* no-op */
   }
 }
 

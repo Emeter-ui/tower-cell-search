@@ -112,8 +112,17 @@ export interface ScanResult {
     | "getAllCellInfo"
     | "requestNetworkScan"
     | "getAllCellInfo+networkScan"
-    | "mock-demo";
+    | "mock-demo"
+    | "ODU: ZLT X17U";
   warnings: string[];
+}
+
+export interface OduStatus {
+  configured: boolean;
+  loggedIn: boolean;
+  url: string | null;
+  sessionAgeMs: number | null;
+  lastError: string | null;
 }
 
 export interface BridgeCapabilities {

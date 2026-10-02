@@ -11,6 +11,7 @@ export interface Settings {
   airtelMnc: string;
   demoMode: boolean;
   selectedSubId: number | null;
+  oduUrl: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -20,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   airtelMnc: "20",
   demoMode: false,
   selectedSubId: null,
+  oduUrl: "http://192.168.1.1",
 };
 
 export function loadSettings(): Settings {

@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- The PWA is loaded from the APK's assets; no network traffic required
-         for the app to run. Clear-text is denied by default. -->
-    <base-config cleartextTrafficPermitted="false" />
+    <!-- Cleartext HTTP is allowed only to let the app talk to a LAN device
+         admin (e.g. the ZLT X17U at 192.168.1.1). The PWA bundle itself is
+         served from inside the APK over a virtual https origin, so this
+         relaxation only affects the user-configured ODU URL. -->
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

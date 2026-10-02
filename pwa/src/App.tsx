@@ -7,6 +7,7 @@ import { Live } from "./views/Live";
 import { History } from "./views/History";
 import { Tools } from "./views/Tools";
 import { Settings } from "./views/Settings";
+import { Odu } from "./views/Odu";
 import { useScannerStore } from "./store/useScannerStore";
 
 export type TabId =
@@ -14,6 +15,7 @@ export type TabId =
   | "scan"
   | "cells"
   | "live"
+  | "odu"
   | "history"
   | "tools"
   | "settings";
@@ -26,7 +28,9 @@ export default function App() {
     // The Kotlin side pushes bridge events (permission results etc.) through
     // this channel so the UI can re-read the bridge status without polling.
     window.__cellBridgeEvent = () => {
-      useScannerStore.getState().refreshBridge();
+      const s = useScannerStore.getState();
+      s.refreshBridge();
+      s.oduRefresh();
     };
     return () => {
       window.__cellBridgeEvent = undefined;
@@ -46,6 +50,7 @@ export default function App() {
         {tab === "scan" && <Scan />}
         {tab === "cells" && <Cells />}
         {tab === "live" && <Live />}
+        {tab === "odu" && <Odu />}
         {tab === "history" && <History />}
         {tab === "tools" && <Tools />}
         {tab === "settings" && <Settings />}

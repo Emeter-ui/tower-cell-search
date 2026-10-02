@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   BridgeStatus,
   CellSample,
+  OduStatus,
   ScanResult,
   SubscriptionInfo,
 } from "../bridge/types";
@@ -35,6 +36,7 @@ interface ScannerStore {
   live: LiveState;
   busy: boolean;
   error: string | null;
+  oduStatus: OduStatus | null;
 
   init(): Promise<void>;
   refreshBridge(): Promise<void>;
@@ -46,6 +48,10 @@ interface ScannerStore {
   updateSettings(patch: Partial<Settings>): void;
   startLive(): void;
   stopLive(): void;
+  oduRefresh(): Promise<void>;
+  oduOpenLogin(): void;
+  oduScan(): Promise<ScanResult | null>;
+  oduClear(): Promise<void>;
 }
 
 export const useScannerStore = create<ScannerStore>((set, get) => ({
@@ -57,6 +63,7 @@ export const useScannerStore = create<ScannerStore>((set, get) => ({
   live: { lastSample: null, running: false, stopFn: null, changes: [] },
   busy: false,
   error: null,
+  oduStatus: null,
 
   async init() {
     const settings = loadSettings();
@@ -64,6 +71,7 @@ export const useScannerStore = create<ScannerStore>((set, get) => ({
     const history = loadHistory();
     set({ settings, scans, history });
     await get().refreshBridge();
+    await get().oduRefresh();
   },
 
   async refreshBridge() {
@@ -174,6 +182,47 @@ export const useScannerStore = create<ScannerStore>((set, get) => ({
     const { stopFn } = get().live;
     if (stopFn) stopFn();
     set({ live: { lastSample: null, running: false, stopFn: null, changes: [] } });
+  },
+
+  async oduRefresh() {
+    try {
+      const s = await getNativeBridge().oduStatus();
+      set({ oduStatus: s });
+    } catch (e) {
+      set({ oduStatus: null });
+    }
+  },
+
+  oduOpenLogin() {
+    const b = getNativeBridge();
+    if (!b.isPresent) {
+      set({ error: "ODU scanning needs the Android companion." });
+      return;
+    }
+    b.oduOpenLogin(get().settings.oduUrl);
+  },
+
+  async oduScan() {
+    set({ busy: true, error: null });
+    try {
+      const b = getNativeBridge();
+      const scan = await b.oduScanOnce();
+      const scans = [scan, ...get().scans].slice(0, 200);
+      const history = mergeHistory(get().history, scan.samples);
+      saveScans(scans);
+      saveHistory(history);
+      set({ scans, history, busy: false });
+      await get().oduRefresh();
+      return scan;
+    } catch (e) {
+      set({ busy: false, error: String(e instanceof Error ? e.message : e) });
+      return null;
+    }
+  },
+
+  async oduClear() {
+    await getNativeBridge().oduClearSession();
+    await get().oduRefresh();
   },
 }));
 

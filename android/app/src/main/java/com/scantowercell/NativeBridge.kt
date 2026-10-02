@@ -26,8 +26,10 @@ class NativeBridge(
     private val webView: WebView,
     private val onRequestPermissions: () -> Unit,
     private val hasPermission: (String) -> Boolean,
+    private val onOpenOduLogin: (String) -> Unit,
 ) {
     private val scanner = CellScanner(app)
+    val oduScanner = OduScanner()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val liveRunning = AtomicBoolean(false)
     private var liveTicker: Runnable? = null
@@ -114,6 +116,35 @@ class NativeBridge(
         liveRunning.set(false)
         liveTicker?.let { mainHandler.removeCallbacks(it) }
         liveTicker = null
+    }
+
+    // --- ODU (ZLT X17U) ---
+
+    /** Drain any session captured by OduLoginActivity into the scanner. */
+    fun drainOduSessionIfAny() {
+        OduSessionHolder.drain(oduScanner)
+    }
+
+    @JavascriptInterface
+    fun oduStatus(): String {
+        drainOduSessionIfAny()
+        return oduScanner.status().toString()
+    }
+
+    @JavascriptInterface
+    fun oduOpenLogin(url: String) {
+        mainHandler.post { onOpenOduLogin(url) }
+    }
+
+    @JavascriptInterface
+    fun oduScanOnce(): String {
+        drainOduSessionIfAny()
+        return oduScanner.scanOnce()
+    }
+
+    @JavascriptInterface
+    fun oduClearSession() {
+        oduScanner.clear()
     }
 
     fun shutdown() {
