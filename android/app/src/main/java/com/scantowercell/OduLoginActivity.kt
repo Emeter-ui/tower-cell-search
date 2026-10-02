@@ -5,6 +5,9 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.ViewGroup
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
@@ -30,7 +33,7 @@ class OduLoginActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        baseUrl = intent.getStringExtra(EXTRA_URL)?.trimEnd('/').orEmpty()
+        baseUrl = normalizeUrl(intent.getStringExtra(EXTRA_URL))
         if (baseUrl.isEmpty()) {
             finish()
             return
@@ -53,11 +56,19 @@ class OduLoginActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
+        val reload = Button(this).apply {
+            text = "Retry"
+            setOnClickListener {
+                statusLine.text = "Reloading $baseUrl…"
+                webView.loadUrl(baseUrl)
+            }
+        }
         val cancel = Button(this).apply {
-            text = "Cancel"
+            text = "Close"
             setOnClickListener { finish() }
         }
         headerBar.addView(statusLine)
+        headerBar.addView(reload)
         headerBar.addView(cancel)
 
         webView = WebView(this).apply {
@@ -72,7 +83,10 @@ class OduLoginActivity : AppCompatActivity() {
                 loadWithOverviewMode = true
                 allowFileAccess = false
                 allowContentAccess = false
-                mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                // Always hit the network; the ODU admin SPA is cheap to
+                // re-fetch and this avoids ERR_CACHE_MISS on first load.
+                cacheMode = WebSettings.LOAD_NO_CACHE
+                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             }
             webViewClient = SniffingClient()
         }
@@ -94,7 +108,20 @@ class OduLoginActivity : AppCompatActivity() {
     // the entire call and that gets fragile. Instead we let the SPA send
     // its own traffic and poll its localStorage for the sessionId every
     // 1.5 seconds (see sessionProbe below).
-    private inner class SniffingClient : WebViewClient()
+    private inner class SniffingClient : WebViewClient() {
+        override fun onReceivedError(
+            view: WebView,
+            request: WebResourceRequest,
+            error: WebResourceError,
+        ) {
+            // Only surface top-frame failures (the SPA throws a lot of XHR
+            // errors during probing that aren't user-facing).
+            if (!request.isForMainFrame) return
+            val msg = "Load failed: ${error.description} (code ${error.errorCode}). " +
+                "Make sure your WiFi is joined to the ODU."
+            runOnUiThread { statusLine.text = msg }
+        }
+    }
 
     override fun onResume() {
         super.onResume()
@@ -164,6 +191,15 @@ class OduLoginActivity : AppCompatActivity() {
             val i = Intent(from, OduLoginActivity::class.java)
             i.putExtra(EXTRA_URL, url)
             from.startActivity(i)
+        }
+
+        /** Prepend http:// if the user typed a bare IP, strip trailing slash. */
+        fun normalizeUrl(raw: String?): String {
+            val s = raw?.trim() ?: return ""
+            if (s.isEmpty()) return ""
+            val withScheme = if (s.startsWith("http://") || s.startsWith("https://")) s
+            else "http://$s"
+            return withScheme.trimEnd('/')
         }
     }
 }
