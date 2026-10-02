@@ -4,12 +4,15 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.webkit.WebViewAssetLoader
 
 class MainActivity : AppCompatActivity() {
 
@@ -31,6 +34,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Chromium rejects ES-module script loads from file:// origins, which
+        // is what the Vite-built PWA uses. Serve the bundle instead from a
+        // virtual https origin backed by the APK's assets directory.
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
         webView = WebView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -45,7 +55,12 @@ class MainActivity : AppCompatActivity() {
                 mediaPlaybackRequiresUserGesture = false
                 setSupportZoom(false)
             }
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest,
+                ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+            }
             setBackgroundColor(0xff0b1220.toInt())
         }
 
@@ -66,8 +81,8 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(webView)
 
-        // Load the PWA bundle shipped inside the APK.
-        webView.loadUrl("file:///android_asset/pwa/index.html")
+        // Load the PWA via the virtual https origin served by WebViewAssetLoader.
+        webView.loadUrl("https://appassets.androidplatform.net/assets/pwa/index.html")
     }
 
     override fun onDestroy() {
