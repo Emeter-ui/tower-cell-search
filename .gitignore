@@ -1,0 +1,21 @@
+# Node / Vite
+pwa/node_modules/
+pwa/dist/
+pwa/.vite/
+pwa/tsconfig.tsbuildinfo
+
+# Android build output
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/gradle/
+android/gradlew
+android/gradlew.bat
+android/captures/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+.DS_Store

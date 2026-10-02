@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- The PWA is loaded from the APK's assets; no network traffic required
+         for the app to run. Clear-text is denied by default. -->
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

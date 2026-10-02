@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl bg-bg-raised border border-line p-4;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg
+      px-4 py-3 text-sm font-medium min-h-[44px] border border-line
+      bg-bg-raised text-ink active:scale-[0.98] disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-accent border-accent text-bg hover:brightness-110;
+  }
+  .btn-danger {
+    @apply border-signal-bad/40 text-signal-bad;
+  }
+  .input {
+    @apply w-full rounded-lg bg-bg-sunk border border-line text-ink
+      px-3 py-3 min-h-[44px] text-sm placeholder:text-ink-mute
+      focus:outline-none focus:border-accent;
+  }
+  .label {
+    @apply block text-xs uppercase tracking-wider text-ink-dim mb-1;
+  }
+  .kv {
+    @apply flex items-baseline justify-between gap-3 py-1;
+  }
+  .kv dt {
+    @apply text-xs text-ink-dim;
+  }
+  .kv dd {
+    @apply font-mono text-sm text-ink;
+  }
+  .pill {
+    @apply inline-flex items-center rounded-md px-2 py-0.5 text-[11px]
+      font-medium border border-line bg-bg-raised;
+  }
+  .th {
+    @apply select-none text-left text-[11px] uppercase tracking-wider
+      text-ink-dim font-medium px-2 py-2 cursor-pointer whitespace-nowrap;
+  }
+  .td {
+    @apply px-2 py-2 text-sm font-mono text-ink whitespace-nowrap;
+  }
+}
