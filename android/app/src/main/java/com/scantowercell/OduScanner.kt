@@ -132,10 +132,10 @@ class OduScanner {
         val now = System.currentTimeMillis()
         val samples = org.json.JSONArray()
 
-        if (payload.hasAny("PCI", "FREQ", "RSRP", "CELL_ID")) {
+        if (hasAny(payload, "PCI", "FREQ", "RSRP", "CELL_ID")) {
             samples.put(buildSample(now, "LTE", lteCell(payload)))
         }
-        if (payload.hasAny("PCI_5G", "FREQ_5G", "RSRP_5G", "CELL_ID_5G")) {
+        if (hasAny(payload, "PCI_5G", "FREQ_5G", "RSRP_5G", "CELL_ID_5G")) {
             samples.put(buildSample(now, "NR", nrCell(payload)))
         }
 
@@ -170,26 +170,26 @@ class OduScanner {
         val plmn = p.optString("PLMN", "")
         val mcc = if (plmn.length >= 5) plmn.substring(0, 3) else null
         val mnc = if (plmn.length >= 5) plmn.substring(3) else null
+        val bwMhz = parseIntOrNull(p.optString("bandwidth"))
         val o = JSONObject()
         o.put("rat", "LTE")
         o.put("isRegistered", true)
         o.put("mcc", mcc ?: JSONObject.NULL)
         o.put("mnc", mnc ?: JSONObject.NULL)
         o.put("plmn", if (plmn.isNotEmpty()) plmn else JSONObject.NULL)
-        o.put("tac", parseHex(p.optString("tac_4g")))
-        o.put("ci", parseHex(p.optString("CELL_ID")))
-        o.put("pci", parseIntOrNull(p.optString("PCI")))
-        o.put("earfcn", parseIntOrNull(p.optString("FREQ")))
-        val bwMhz = parseIntOrNull(p.optString("bandwidth"))
+        o.put("tac", parseHex(p.optString("tac_4g")) ?: JSONObject.NULL)
+        o.put("ci", parseHex(p.optString("CELL_ID")) ?: JSONObject.NULL)
+        o.put("pci", parseIntOrNull(p.optString("PCI")) ?: JSONObject.NULL)
+        o.put("earfcn", parseIntOrNull(p.optString("FREQ")) ?: JSONObject.NULL)
         o.put("bandwidth", if (bwMhz == null) JSONObject.NULL else bwMhz * 1000)
         val sig = JSONObject()
-        sig.put("rsrp", parseIntOrNull(p.optString("RSRP")))
-        sig.put("rsrq", parseIntOrNull(p.optString("RSRQ")))
-        sig.put("rssi", parseIntOrNull(p.optString("RSSI")))
-        sig.put("rssnr", parseIntOrNull(p.optString("SINR")))
-        sig.put("cqi", parseIntOrNull(p.optString("CQI")))
+        sig.put("rsrp", parseIntOrNull(p.optString("RSRP")) ?: JSONObject.NULL)
+        sig.put("rsrq", parseIntOrNull(p.optString("RSRQ")) ?: JSONObject.NULL)
+        sig.put("rssi", parseIntOrNull(p.optString("RSSI")) ?: JSONObject.NULL)
+        sig.put("rssnr", parseIntOrNull(p.optString("SINR")) ?: JSONObject.NULL)
+        sig.put("cqi", parseIntOrNull(p.optString("CQI")) ?: JSONObject.NULL)
         sig.put("timingAdvance", JSONObject.NULL)
-        sig.put("level", parseIntOrNull(p.optString("signal_lvl")))
+        sig.put("level", parseIntOrNull(p.optString("signal_lvl")) ?: JSONObject.NULL)
         o.put("signal", sig)
         return o
     }
@@ -198,26 +198,26 @@ class OduScanner {
         val plmn = p.optString("PLMN", "")
         val mcc = if (plmn.length >= 5) plmn.substring(0, 3) else null
         val mnc = if (plmn.length >= 5) plmn.substring(3) else null
+        val sinr5g = parseIntOrNull(p.optString("SINR_5G"))
+            ?: parseIntOrNull(p.optString("S_SINR"))
         val o = JSONObject()
         o.put("rat", "NR")
         o.put("isRegistered", true)
         o.put("mcc", mcc ?: JSONObject.NULL)
         o.put("mnc", mnc ?: JSONObject.NULL)
         o.put("plmn", if (plmn.isNotEmpty()) plmn else JSONObject.NULL)
-        o.put("tac", parseHex(p.optString("tac_5g")))
-        o.put("nci", parseHex(p.optString("CELL_ID_5G")))
-        o.put("pci", parseIntOrNull(p.optString("PCI_5G")))
-        o.put("nrarfcn", parseIntOrNull(p.optString("FREQ_5G")))
+        o.put("tac", parseHex(p.optString("tac_5g")) ?: JSONObject.NULL)
+        o.put("nci", parseHex(p.optString("CELL_ID_5G")) ?: JSONObject.NULL)
+        o.put("pci", parseIntOrNull(p.optString("PCI_5G")) ?: JSONObject.NULL)
+        o.put("nrarfcn", parseIntOrNull(p.optString("FREQ_5G")) ?: JSONObject.NULL)
         val sig = JSONObject()
-        sig.put("ssRsrp", parseIntOrNull(p.optString("RSRP_5G")))
-        sig.put("ssRsrq", parseIntOrNull(p.optString("RSRQ_5G")))
-        val sinr5g = parseIntOrNull(p.optString("SINR_5G"))
-            ?: parseIntOrNull(p.optString("S_SINR"))
+        sig.put("ssRsrp", parseIntOrNull(p.optString("RSRP_5G")) ?: JSONObject.NULL)
+        sig.put("ssRsrq", parseIntOrNull(p.optString("RSRQ_5G")) ?: JSONObject.NULL)
         sig.put("ssSinr", sinr5g ?: JSONObject.NULL)
         sig.put("csiRsrp", JSONObject.NULL)
         sig.put("csiRsrq", JSONObject.NULL)
         sig.put("csiSinr", JSONObject.NULL)
-        sig.put("level", parseIntOrNull(p.optString("signal_lvl")))
+        sig.put("level", parseIntOrNull(p.optString("signal_lvl")) ?: JSONObject.NULL)
         o.put("signal", sig)
         return o
     }
@@ -230,19 +230,17 @@ class OduScanner {
         private const val SUB_ODU = 10001
         const val CMD_SERVING_CELL = "f3e328b1-c743-4aaf-be88-fdb5e32d7e51"
 
-        private fun parseIntOrNull(v: String?): Any {
-            if (v.isNullOrBlank()) return JSONObject.NULL
-            return v.toIntOrNull() ?: JSONObject.NULL
+        private fun parseIntOrNull(v: String?): Int? {
+            if (v.isNullOrBlank()) return null
+            return v.toIntOrNull()
         }
-        private fun parseHex(v: String?): Any {
-            if (v.isNullOrBlank()) return JSONObject.NULL
-            v.toLongOrNull(16)?.let { return it }
-            return v.toLongOrNull() ?: JSONObject.NULL
+        private fun parseHex(v: String?): Long? {
+            if (v.isNullOrBlank()) return null
+            return v.toLongOrNull(16) ?: v.toLongOrNull()
         }
-        private fun JSONObject.hasAny(vararg keys: String): Boolean {
+        private fun hasAny(obj: JSONObject, vararg keys: String): Boolean {
             for (k in keys) {
-                val v = this.optString(k, "")
-                if (v.isNotEmpty()) return true
+                if (obj.optString(k, "").isNotEmpty()) return true
             }
             return false
         }
