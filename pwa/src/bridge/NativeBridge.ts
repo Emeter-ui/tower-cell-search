@@ -20,6 +20,7 @@ type RawBridge = {
   // --- ODU (ZLT X17U) ---
   oduStatus(): string;
   oduOpenLogin(url: string): void;
+  oduLogin(url: string, username: string, password: string): string;
   oduScanOnce(): string; // throws by returning {"error":"..."} when not logged in
   oduClearSession(): void;
 };
@@ -48,6 +49,7 @@ export interface NativeBridge {
   }): () => void;
   oduStatus(): Promise<OduStatus>;
   oduOpenLogin(url: string): void;
+  oduLogin(url: string, username: string, password: string): Promise<void>;
   oduScanOnce(): Promise<ScanResult>;
   oduClearSession(): Promise<void>;
 }
@@ -99,6 +101,10 @@ class RealBridge implements NativeBridge {
   oduOpenLogin(url: string): void {
     this.raw.oduOpenLogin(url);
   }
+  async oduLogin(url: string, username: string, password: string): Promise<void> {
+    const parsed = JSON.parse(this.raw.oduLogin(url, username, password));
+    if (parsed && typeof parsed.error === "string") throw new Error(parsed.error);
+  }
   async oduScanOnce(): Promise<ScanResult> {
     const parsed = JSON.parse(this.raw.oduScanOnce());
     if (parsed && typeof parsed.error === "string") throw new Error(parsed.error);
@@ -141,6 +147,9 @@ class AbsentBridge implements NativeBridge {
   }
   oduOpenLogin() {
     /* no-op */
+  }
+  async oduLogin(): Promise<void> {
+    throw new Error(this.reason);
   }
   async oduScanOnce(): Promise<ScanResult> {
     throw new Error(this.reason);

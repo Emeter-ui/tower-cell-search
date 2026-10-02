@@ -8,6 +8,8 @@ import android.util.Log
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
@@ -64,6 +66,74 @@ class OduScanner(private val appContext: Context? = null) {
         lastError = null
     }
 
+    /**
+     * Programmatic ZLT X17U login — matches the SPA logic exactly:
+     *   challenge (3830c61a) → token
+     *   passwd  = SHA256(token + plaintextPassword)
+     *   session = md5(rand) + md5(rand)
+     *   POST d2aa9843 with {username, passwd, token, sessionId, cmd, method}
+     *   Server returns a real sessionId used for all authenticated calls.
+     *
+     * Returns a JSON string describing success/failure. On success the
+     * session is stored on [this] and ready for scanOnce().
+     */
+    fun login(rawUrl: String, username: String, password: String): String {
+        val baseUrl = normalizeUrl(rawUrl)
+        if (baseUrl.isEmpty()) return errorJson("Missing ODU URL.")
+        return try {
+            // 1. challenge → token
+            val chalBody = postCgi(baseUrl, CMD_CHALLENGE, "")
+            val chal = JSONObject(chalBody)
+            if (!chal.optBoolean("success", false)) {
+                return errorJson("Challenge failed: ${chal.optString("message", chalBody.take(120))}")
+            }
+            val token = chal.optString("token")
+            if (token.isEmpty()) return errorJson("No token in challenge response.")
+
+            // 2. login POST
+            val passwd = sha256Hex(token + password)
+            val nonce = md5Hex(SecureRandom().nextInt().toString()) +
+                    md5Hex(SecureRandom().nextInt().toString())
+            val payload = JSONObject().apply {
+                put("username", username)
+                put("passwd", passwd)
+                put("token", token)
+                put("sessionId", nonce)
+                put("cmd", CMD_LOGIN)
+                put("method", "POST")
+            }
+            val loginBody = postCgiRaw(baseUrl, payload.toString())
+            val resp = JSONObject(loginBody)
+
+            // Auth failures carry login_fail / login_fail2 even though
+            // success=true at the request-protocol level.
+            if (resp.optString("login_fail") == "fail") {
+                val tries = resp.optString("login_times")
+                val msg = "Wrong password. Attempts left before lockout: $tries"
+                lastError = msg
+                return errorJson(msg)
+            }
+            if (resp.optString("login_fail2") == "fail") {
+                val sec = resp.optString("login_time")
+                val msg = "ODU is temporarily locked. Try again in ~$sec s."
+                lastError = msg
+                return errorJson(msg)
+            }
+            val sess = resp.optString("sessionId")
+            if (sess.isEmpty()) {
+                return errorJson("Login succeeded but no sessionId was returned.")
+            }
+            captureSession(baseUrl, sess)
+            successJson("Logged in. user_level=${resp.optString("user_level", "?")}")
+        } catch (e: Exception) {
+            lastError = e.message
+            errorJson("Login failed: ${e.message}")
+        }
+    }
+
+    private fun successJson(msg: String): String =
+        JSONObject().put("ok", true).put("message", msg).toString()
+
     fun status(): JSONObject {
         val s = session.get()
         val o = JSONObject()
@@ -113,13 +183,17 @@ class OduScanner(private val appContext: Context? = null) {
     private class SessionLostException(msg: String) : RuntimeException(msg)
 
     private fun postCgi(baseUrl: String, cmd: String, sessionId: String): String {
-        val url = URL("$baseUrl/cgi-bin/http.cgi")
         val body = JSONObject().apply {
             put("cmd", cmd)
             put("method", "GET")
             put("sessionId", sessionId)
-        }.toString().toByteArray(Charsets.UTF_8)
+        }.toString()
+        return postCgiRaw(baseUrl, body)
+    }
 
+    private fun postCgiRaw(baseUrl: String, bodyJson: String): String {
+        val url = URL("$baseUrl/cgi-bin/http.cgi")
+        val bodyBytes = bodyJson.toByteArray(Charsets.UTF_8)
         // Pin this request to a WiFi network when we can — avoids the OS
         // routing LAN traffic over cellular when the ODU WiFi has no
         // internet access.
@@ -136,7 +210,7 @@ class OduScanner(private val appContext: Context? = null) {
             setRequestProperty("Referer", "$baseUrl/")
         }
         try {
-            conn.outputStream.use { it.write(body) }
+            conn.outputStream.use { it.write(bodyBytes) }
             val code = conn.responseCode
             if (code == 401 || code == 403) {
                 throw SessionLostException("ODU returned HTTP $code — need to log in again.")
@@ -250,6 +324,26 @@ class OduScanner(private val appContext: Context? = null) {
         private const val TAG = "OduScanner"
         private const val SUB_ODU = 10001
         const val CMD_SERVING_CELL = "f3e328b1-c743-4aaf-be88-fdb5e32d7e51"
+        const val CMD_CHALLENGE = "3830c61a-620d-47da-ae47-33d8401401c4"
+        const val CMD_LOGIN = "d2aa9843-494b-4947-9621-a46ec652ecd9"
+
+        fun sha256Hex(s: String): String {
+            val md = MessageDigest.getInstance("SHA-256")
+            val bytes = md.digest(s.toByteArray(Charsets.UTF_8))
+            return bytes.joinToString("") { "%02x".format(it) }
+        }
+        fun md5Hex(s: String): String {
+            val md = MessageDigest.getInstance("MD5")
+            val bytes = md.digest(s.toByteArray(Charsets.UTF_8))
+            return bytes.joinToString("") { "%02x".format(it) }
+        }
+        fun normalizeUrl(raw: String?): String {
+            val s = raw?.trim() ?: return ""
+            if (s.isEmpty()) return ""
+            val withScheme = if (s.startsWith("http://") || s.startsWith("https://")) s
+            else "http://$s"
+            return withScheme.trimEnd('/')
+        }
 
         private fun parseIntOrNull(v: String?): Int? {
             if (v.isNullOrBlank()) return null

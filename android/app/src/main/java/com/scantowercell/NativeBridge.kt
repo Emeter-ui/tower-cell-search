@@ -136,6 +136,16 @@ class NativeBridge(
         mainHandler.post { onOpenOduLogin(url) }
     }
 
+    /**
+     * Programmatic login — doesn't need the WebView. Returns a JSON string:
+     *   {"ok":true,"message":"..."} on success (session captured), or
+     *   {"error":"..."} on any failure (wrong password, lockout, etc.).
+     */
+    @JavascriptInterface
+    fun oduLogin(url: String, username: String, password: String): String {
+        return oduScanner.login(url, username, password)
+    }
+
     @JavascriptInterface
     fun oduScanOnce(): String {
         drainOduSessionIfAny()

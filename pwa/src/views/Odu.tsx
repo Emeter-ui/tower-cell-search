@@ -13,6 +13,7 @@ export function Odu() {
     oduStatus,
     oduRefresh,
     oduOpenLogin,
+    oduLogin,
     oduScan,
     oduClear,
     scans,
@@ -20,6 +21,8 @@ export function Odu() {
     error,
   } = useScannerStore();
   const [selected, setSelected] = useState<CellSample | null>(null);
+  const [username, setUsername] = useState("root");
+  const [password, setPassword] = useState("");
 
   useEffect(() => {
     oduRefresh();
@@ -71,10 +74,46 @@ export function Odu() {
           )}
         </div>
 
+        {!oduStatus?.loggedIn && (
+          <div className="space-y-2 border-t border-line pt-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="label">Username</label>
+                <input
+                  className="input"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="label">Password</label>
+                <input
+                  className="input"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="text-xs text-ink-mute">
+              Default admin on most ZLT X17U units is <code>root</code> / <code>admin</code>.
+              Credentials stay on this device.
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
-          <button className="btn" onClick={oduOpenLogin} disabled={!bridgeStatus?.present}>
-            {oduStatus?.loggedIn ? "Re-open login" : "Open ODU admin to log in"}
-          </button>
+          {!oduStatus?.loggedIn && (
+            <button
+              className="btn btn-primary flex-1 min-w-[140px]"
+              onClick={() => oduLogin(username, password)}
+              disabled={busy || !bridgeStatus?.present || !password}
+            >
+              {busy ? "Logging in…" : "Log in"}
+            </button>
+          )}
           <button
             className="btn btn-primary"
             onClick={() => oduScan()}
@@ -84,9 +123,17 @@ export function Odu() {
           </button>
           {oduStatus?.loggedIn && (
             <button className="btn btn-danger" onClick={() => oduClear()}>
-              Forget session
+              Log out
             </button>
           )}
+          <button
+            className="btn"
+            onClick={oduOpenLogin}
+            disabled={!bridgeStatus?.present}
+            title="Fallback: open the ODU's admin page in a WebView"
+          >
+            {oduStatus?.loggedIn ? "Open admin UI" : "Open admin UI (fallback)"}
+          </button>
         </div>
       </div>
 

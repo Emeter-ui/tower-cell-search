@@ -50,6 +50,7 @@ interface ScannerStore {
   stopLive(): void;
   oduRefresh(): Promise<void>;
   oduOpenLogin(): void;
+  oduLogin(username: string, password: string): Promise<boolean>;
   oduScan(): Promise<ScanResult | null>;
   oduClear(): Promise<void>;
 }
@@ -200,6 +201,21 @@ export const useScannerStore = create<ScannerStore>((set, get) => ({
       return;
     }
     b.oduOpenLogin(get().settings.oduUrl);
+  },
+
+  async oduLogin(username: string, password: string) {
+    set({ busy: true, error: null });
+    try {
+      const b = getNativeBridge();
+      if (!b.isPresent) throw new Error("ODU scanning needs the Android companion.");
+      await b.oduLogin(get().settings.oduUrl, username, password);
+      await get().oduRefresh();
+      set({ busy: false });
+      return true;
+    } catch (e) {
+      set({ busy: false, error: String(e instanceof Error ? e.message : e) });
+      return false;
+    }
   },
 
   async oduScan() {
