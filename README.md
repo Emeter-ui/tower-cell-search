@@ -45,12 +45,12 @@ the PWA first and copy it in:
 Then build the APK. You need:
 
 - Android SDK with API 34 installed (`ANDROID_HOME` set).
-- Gradle 8.6+ (either system `gradle` or run `gradle wrapper --gradle-version 8.6`
+- Gradle 8.6+ (either system `gradle` or run `gradle wrapper --gradle-version 8.7`
   inside `android/` once, then use `./gradlew`).
 
 ```
 cd ../android
-gradle wrapper --gradle-version 8.6     # one-time: generates gradlew
+gradle wrapper --gradle-version 8.7     # one-time: generates gradlew
 ./gradlew assembleDebug
 # APK at android/app/build/outputs/apk/debug/app-debug.apk
 ```
