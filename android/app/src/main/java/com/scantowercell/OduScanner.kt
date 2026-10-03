@@ -155,19 +155,35 @@ class OduScanner(private val appContext: Context? = null) {
     fun scanOnce(): String {
         val s = session.get()
         if (s == null) {
-            return errorJson("Not logged in to the ODU. Tap 'Open ODU admin to log in'.")
+            return errorJson("Not logged in to the ODU. Tap 'Log in' first.")
         }
         return try {
-            val body = postCgi(s.baseUrl, CMD_SERVING_CELL, s.sessionId)
-            val payload = JSONObject(body)
-            if (!payload.optBoolean("success", false)) {
-                // Likely session expired; drop it so the UI can prompt a fresh login.
+            // Call BOTH the serving-cell detail endpoint and the generic
+            // polling endpoint, then merge the payloads field-by-field. On
+            // some firmware builds `f3e328b1` returns minimal data when the
+            // baseband hasn't produced a fresh snapshot yet; `2ee26212`
+            // always has at least the signal fields.
+            val detailBody = runCatching { postCgi(s.baseUrl, CMD_SERVING_CELL, s.sessionId) }
+                .getOrElse { "{}" }
+            val loopBody = runCatching { postCgi(s.baseUrl, CMD_LOOP_DATA, s.sessionId) }
+                .getOrElse { "{}" }
+            val detail = runCatching { JSONObject(detailBody) }.getOrDefault(JSONObject())
+            val loop   = runCatching { JSONObject(loopBody)   }.getOrDefault(JSONObject())
+            val merged = JSONObject()
+            // Prefer the detail endpoint's values when present (they carry
+            // PCI/FREQ/CELL_ID etc.), fall back to loop for the signal fields.
+            for (k in loop.keys()) merged.put(k, loop.get(k))
+            for (k in detail.keys()) {
+                val v = detail.get(k)
+                if (v !is String || v.isNotEmpty()) merged.put(k, v)
+            }
+            if (!detail.optBoolean("success", false) && !loop.optBoolean("success", false)) {
                 session.set(null)
-                val msg = "ODU responded success=false (session may have expired)."
+                val msg = "ODU responded success=false — session may have expired."
                 lastError = msg
                 return errorJson(msg)
             }
-            buildScanJson(payload)
+            buildScanJson(merged, detailBody, loopBody)
         } catch (e: SessionLostException) {
             session.set(null)
             lastError = e.message
@@ -222,7 +238,11 @@ class OduScanner(private val appContext: Context? = null) {
         }
     }
 
-    private fun buildScanJson(payload: JSONObject): String {
+    private fun buildScanJson(
+        payload: JSONObject,
+        rawDetail: String,
+        rawLoop: String,
+    ): String {
         // Build the ScanResult envelope and emit one sample per populated RAT.
         val now = System.currentTimeMillis()
         val samples = org.json.JSONArray()
@@ -238,6 +258,19 @@ class OduScanner(private val appContext: Context? = null) {
         if (samples.length() == 0) {
             warnings.put("ODU response had no LTE or NR fields populated.")
         }
+        // Report which key cellular fields the merged payload actually carried
+        // so the user can see at a glance when the ODU is sending minimal data.
+        val fieldStatus = StringBuilder("Fields present:")
+        for (k in listOf("PLMN","PCI","FREQ","CELL_ID","ENODEBID","currentband",
+                         "bandwidth","RSRP","RSRQ","RSSI","SINR","CQI")) {
+            val v = payload.optString(k, "")
+            fieldStatus.append(" $k=").append(if (v.isEmpty()) "∅" else v)
+        }
+        warnings.put(fieldStatus.toString())
+        // And raw bodies, truncated — they land in the ScanResult warnings
+        // and are visible in the ODU tab.
+        warnings.put("raw(f3e328b1): ${rawDetail.take(600)}")
+        warnings.put("raw(2ee26212): ${rawLoop.take(600)}")
 
         val scan = JSONObject()
         scan.put("scanId", "odu-" + UUID.randomUUID().toString().take(8))
@@ -324,8 +357,9 @@ class OduScanner(private val appContext: Context? = null) {
         private const val TAG = "OduScanner"
         private const val SUB_ODU = 10001
         const val CMD_SERVING_CELL = "f3e328b1-c743-4aaf-be88-fdb5e32d7e51"
-        const val CMD_CHALLENGE = "3830c61a-620d-47da-ae47-33d8401401c4"
-        const val CMD_LOGIN = "d2aa9843-494b-4947-9621-a46ec652ecd9"
+        const val CMD_LOOP_DATA   = "2ee26212-96cc-45d3-8f0d-808e4cde884a"
+        const val CMD_CHALLENGE   = "3830c61a-620d-47da-ae47-33d8401401c4"
+        const val CMD_LOGIN       = "d2aa9843-494b-4947-9621-a46ec652ecd9"
 
         fun sha256Hex(s: String): String {
             val md = MessageDigest.getInstance("SHA-256")
