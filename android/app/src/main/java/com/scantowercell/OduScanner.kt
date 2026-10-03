@@ -158,32 +158,34 @@ class OduScanner(private val appContext: Context? = null) {
             return errorJson("Not logged in to the ODU. Tap 'Log in' first.")
         }
         return try {
-            // Call BOTH the serving-cell detail endpoint and the generic
-            // polling endpoint, then merge the payloads field-by-field. On
-            // some firmware builds `f3e328b1` returns minimal data when the
-            // baseband hasn't produced a fresh snapshot yet; `2ee26212`
-            // always has at least the signal fields.
-            val detailBody = runCatching { postCgi(s.baseUrl, CMD_SERVING_CELL, s.sessionId) }
-                .getOrElse { "{}" }
-            val loopBody = runCatching { postCgi(s.baseUrl, CMD_LOOP_DATA, s.sessionId) }
-                .getOrElse { "{}" }
-            val detail = runCatching { JSONObject(detailBody) }.getOrDefault(JSONObject())
-            val loop   = runCatching { JSONObject(loopBody)   }.getOrDefault(JSONObject())
-            val merged = JSONObject()
-            // Prefer the detail endpoint's values when present (they carry
-            // PCI/FREQ/CELL_ID etc.), fall back to loop for the signal fields.
-            for (k in loop.keys()) merged.put(k, loop.get(k))
-            for (k in detail.keys()) {
-                val v = detail.get(k)
-                if (v !is String || v.isNotEmpty()) merged.put(k, v)
+            // Probe every known data endpoint and merge whichever returns
+            // cellular fields. Firmware revisions seem to shuffle which UUID
+            // carries the serving-cell detail, so brute-force merging gives
+            // us the best shot at a complete sample.
+            val probes = PROBE_CMDS.map { (label, cmd) ->
+                val raw = runCatching { postCgi(s.baseUrl, cmd, s.sessionId) }
+                    .getOrElse { ex -> "{\"error\":\"${ex.message}\"}" }
+                Triple(label, cmd, raw)
             }
-            if (!detail.optBoolean("success", false) && !loop.optBoolean("success", false)) {
+
+            val merged = JSONObject()
+            var anySuccess = false
+            for ((_, _, raw) in probes) {
+                val obj = runCatching { JSONObject(raw) }.getOrNull() ?: continue
+                if (obj.optBoolean("success", false)) anySuccess = true
+                for (k in obj.keys()) {
+                    val v = obj.get(k)
+                    if (v is String && v.isEmpty()) continue
+                    merged.put(k, v)
+                }
+            }
+            if (!anySuccess) {
                 session.set(null)
-                val msg = "ODU responded success=false — session may have expired."
+                val msg = "All ODU endpoints returned success=false. Session likely expired."
                 lastError = msg
                 return errorJson(msg)
             }
-            buildScanJson(merged, detailBody, loopBody)
+            buildScanJson(merged, probes)
         } catch (e: SessionLostException) {
             session.set(null)
             lastError = e.message
@@ -240,8 +242,7 @@ class OduScanner(private val appContext: Context? = null) {
 
     private fun buildScanJson(
         payload: JSONObject,
-        rawDetail: String,
-        rawLoop: String,
+        probes: List<Triple<String, String, String>>,
     ): String {
         // Build the ScanResult envelope and emit one sample per populated RAT.
         val now = System.currentTimeMillis()
@@ -267,10 +268,17 @@ class OduScanner(private val appContext: Context? = null) {
             fieldStatus.append(" $k=").append(if (v.isEmpty()) "∅" else v)
         }
         warnings.put(fieldStatus.toString())
-        // And raw bodies, truncated — they land in the ScanResult warnings
-        // and are visible in the ODU tab.
-        warnings.put("raw(f3e328b1): ${rawDetail.take(600)}")
-        warnings.put("raw(2ee26212): ${rawLoop.take(600)}")
+        // Per-probe one-liner so we can see which UUID carries which cmd code
+        // and whether the serving-cell fields appeared anywhere.
+        for ((label, cmd, raw) in probes) {
+            val obj = runCatching { JSONObject(raw) }.getOrNull()
+            val internalCmd = obj?.optInt("cmd", -1) ?: -1
+            val hasPci = obj?.optString("PCI", "")?.isNotEmpty() == true ||
+                    obj?.optString("PCI_5G", "")?.isNotEmpty() == true
+            val hasFreq = obj?.optString("FREQ", "")?.isNotEmpty() == true ||
+                    obj?.optString("FREQ_5G", "")?.isNotEmpty() == true
+            warnings.put("$label($cmd) cmd=$internalCmd pci=${hasPci} freq=${hasFreq} raw=${raw.take(400)}")
+        }
 
         val scan = JSONObject()
         scan.put("scanId", "odu-" + UUID.randomUUID().toString().take(8))
@@ -360,6 +368,19 @@ class OduScanner(private val appContext: Context? = null) {
         const val CMD_LOOP_DATA   = "2ee26212-96cc-45d3-8f0d-808e4cde884a"
         const val CMD_CHALLENGE   = "3830c61a-620d-47da-ae47-33d8401401c4"
         const val CMD_LOGIN       = "d2aa9843-494b-4947-9621-a46ec652ecd9"
+
+        // Probe set: every UUID discovered in the SPA bundles that returns
+        // data (not login / challenge / logout). We call them all on each
+        // scan and merge the fields.
+        val PROBE_CMDS: List<Pair<String, String>> = listOf(
+            "Ya"            to "f3e328b1-c743-4aaf-be88-fdb5e32d7e51",
+            "getLoopData"   to "2ee26212-96cc-45d3-8f0d-808e4cde884a",
+            "getInitData"   to "9f2861ee-baf8-4038-bab6-774ad4e930b0",
+            "getDeviceInfo" to "ece6b6d4-61c7-4dad-af23-c8249c75c58c",
+            "getConfigData" to "55f29f9b-20cd-4d72-ab20-63ba0b4d2a7a",
+            "Ka"            to "89af35c9-b448-4fc7-a477-828a3e9467f8",
+            "Za"            to "5332f5ee-5be9-4843-b85f-1b251aa5f4ff",
+        )
 
         fun sha256Hex(s: String): String {
             val md = MessageDigest.getInstance("SHA-256")
