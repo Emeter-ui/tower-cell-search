@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- INTERNET is required to open sockets at all — needed by the
+         WebView that loads the PWA, by the ODU HTTP calls, and by the
+         Android WebView process itself. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Fine location is required by Android for getAllCellInfo() to return
          actual cell data. Coarse is included for older APIs that accept it. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
