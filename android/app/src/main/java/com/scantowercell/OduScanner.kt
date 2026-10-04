@@ -244,15 +244,22 @@ class OduScanner(private val appContext: Context? = null) {
         payload: JSONObject,
         probes: List<Triple<String, String, String>>,
     ): String {
-        // Build the ScanResult envelope and emit one sample per populated RAT.
+        // Build the ScanResult envelope and emit one sample per populated RAT
+        // AND per aggregated carrier. The ZLT firmware packs the primary and
+        // CA secondaries into "+"-separated strings (e.g. PCI="421+421+421",
+        // FREQ="3500+3250+1873", currentband="8+7+3", bandwidth="10+20+10").
         val now = System.currentTimeMillis()
         val samples = org.json.JSONArray()
 
         if (hasAny(payload, "PCI", "FREQ", "RSRP", "CELL_ID")) {
-            samples.put(buildSample(now, "LTE", lteCell(payload)))
+            for (cell in lteCarriers(payload)) {
+                samples.put(buildSample(now, "LTE", cell))
+            }
         }
         if (hasAny(payload, "PCI_5G", "FREQ_5G", "RSRP_5G", "CELL_ID_5G")) {
-            samples.put(buildSample(now, "NR", nrCell(payload)))
+            for (cell in nrCarriers(payload)) {
+                samples.put(buildSample(now, "NR", cell))
+            }
         }
 
         val warnings = org.json.JSONArray()
@@ -302,60 +309,101 @@ class OduScanner(private val appContext: Context? = null) {
         return sample
     }
 
-    private fun lteCell(p: JSONObject): JSONObject {
+    private fun lteCarriers(p: JSONObject): List<JSONObject> {
         val plmn = p.optString("PLMN", "")
         val mcc = if (plmn.length >= 5) plmn.substring(0, 3) else null
         val mnc = if (plmn.length >= 5) plmn.substring(3) else null
-        val bwMhz = parseIntOrNull(p.optString("bandwidth"))
-        val o = JSONObject()
-        o.put("rat", "LTE")
-        o.put("isRegistered", true)
-        o.put("mcc", mcc ?: JSONObject.NULL)
-        o.put("mnc", mnc ?: JSONObject.NULL)
-        o.put("plmn", if (plmn.isNotEmpty()) plmn else JSONObject.NULL)
-        o.put("tac", parseHex(p.optString("tac_4g")) ?: JSONObject.NULL)
-        o.put("ci", parseHex(p.optString("CELL_ID")) ?: JSONObject.NULL)
-        o.put("pci", parseIntOrNull(p.optString("PCI")) ?: JSONObject.NULL)
-        o.put("earfcn", parseIntOrNull(p.optString("FREQ")) ?: JSONObject.NULL)
-        o.put("bandwidth", if (bwMhz == null) JSONObject.NULL else bwMhz * 1000)
-        val sig = JSONObject()
-        sig.put("rsrp", parseIntOrNull(p.optString("RSRP")) ?: JSONObject.NULL)
-        sig.put("rsrq", parseIntOrNull(p.optString("RSRQ")) ?: JSONObject.NULL)
-        sig.put("rssi", parseIntOrNull(p.optString("RSSI")) ?: JSONObject.NULL)
-        sig.put("rssnr", parseIntOrNull(p.optString("SINR")) ?: JSONObject.NULL)
-        sig.put("cqi", parseIntOrNull(p.optString("CQI")) ?: JSONObject.NULL)
-        sig.put("timingAdvance", JSONObject.NULL)
-        sig.put("level", parseIntOrNull(p.optString("signal_lvl")) ?: JSONObject.NULL)
-        o.put("signal", sig)
-        return o
+        val pciList = splitPlus(p.optString("PCI"))
+        val freqList = splitPlus(p.optString("FREQ"))
+        val bandList = splitPlus(p.optString("currentband"))
+        val bwList = splitPlus(p.optString("bandwidth"))
+        val n = listOf(pciList, freqList, bandList, bwList).maxOf { it.size }
+        if (n == 0) return emptyList()
+
+        val tac = parseHex(p.optString("tac_4g"))
+        val ci  = parseHex(p.optString("CELL_ID"))
+        val rsrp = parseIntOrNull(p.optString("RSRP"))
+        val rsrq = parseIntOrNull(p.optString("RSRQ"))
+        val rssi = parseIntOrNull(p.optString("RSSI"))
+        val sinr = parseIntOrNull(p.optString("SINR"))
+        val cqi  = parseIntOrNull(p.optString("CQI"))
+        val lvl  = parseIntOrNull(p.optString("signal_lvl"))
+
+        val out = mutableListOf<JSONObject>()
+        for (i in 0 until n) {
+            val isPrimary = i == 0
+            val bwMhz = bwList.getOrNull(i)?.toIntOrNull()
+            val o = JSONObject()
+            o.put("rat", "LTE")
+            o.put("isRegistered", isPrimary)
+            o.put("mcc", mcc ?: JSONObject.NULL)
+            o.put("mnc", mnc ?: JSONObject.NULL)
+            o.put("plmn", if (plmn.isNotEmpty()) plmn else JSONObject.NULL)
+            // TAC and ECI are only strictly meaningful for the primary cell.
+            o.put("tac", (if (isPrimary) tac else null) ?: JSONObject.NULL)
+            o.put("ci",  (if (isPrimary) ci  else null) ?: JSONObject.NULL)
+            o.put("pci",    pciList.getOrNull(i)?.toIntOrNull() ?: JSONObject.NULL)
+            o.put("earfcn", freqList.getOrNull(i)?.toIntOrNull() ?: JSONObject.NULL)
+            o.put("bandwidth", if (bwMhz == null) JSONObject.NULL else bwMhz * 1000)
+            val sig = JSONObject()
+            // The ODU reports a single stack-wide RSRP; only attach it to the
+            // primary carrier so the UI doesn't look like three identical cells
+            // all magically at the same level.
+            sig.put("rsrp", (if (isPrimary) rsrp else null) ?: JSONObject.NULL)
+            sig.put("rsrq", (if (isPrimary) rsrq else null) ?: JSONObject.NULL)
+            sig.put("rssi", (if (isPrimary) rssi else null) ?: JSONObject.NULL)
+            sig.put("rssnr",(if (isPrimary) sinr else null) ?: JSONObject.NULL)
+            sig.put("cqi",  (if (isPrimary) cqi  else null) ?: JSONObject.NULL)
+            sig.put("timingAdvance", JSONObject.NULL)
+            sig.put("level", lvl ?: JSONObject.NULL)
+            o.put("signal", sig)
+            out.add(o)
+        }
+        return out
     }
 
-    private fun nrCell(p: JSONObject): JSONObject {
+    private fun nrCarriers(p: JSONObject): List<JSONObject> {
         val plmn = p.optString("PLMN", "")
         val mcc = if (plmn.length >= 5) plmn.substring(0, 3) else null
         val mnc = if (plmn.length >= 5) plmn.substring(3) else null
-        val sinr5g = parseIntOrNull(p.optString("SINR_5G"))
+        val pciList = splitPlus(p.optString("PCI_5G"))
+        val freqList = splitPlus(p.optString("FREQ_5G"))
+        val n = maxOf(pciList.size, freqList.size)
+        if (n == 0) return emptyList()
+
+        val tac = parseHex(p.optString("tac_5g"))
+        val nci = parseHex(p.optString("CELL_ID_5G"))
+        val rsrp = parseIntOrNull(p.optString("RSRP_5G"))
+        val rsrq = parseIntOrNull(p.optString("RSRQ_5G"))
+        val sinr = parseIntOrNull(p.optString("SINR_5G"))
             ?: parseIntOrNull(p.optString("S_SINR"))
-        val o = JSONObject()
-        o.put("rat", "NR")
-        o.put("isRegistered", true)
-        o.put("mcc", mcc ?: JSONObject.NULL)
-        o.put("mnc", mnc ?: JSONObject.NULL)
-        o.put("plmn", if (plmn.isNotEmpty()) plmn else JSONObject.NULL)
-        o.put("tac", parseHex(p.optString("tac_5g")) ?: JSONObject.NULL)
-        o.put("nci", parseHex(p.optString("CELL_ID_5G")) ?: JSONObject.NULL)
-        o.put("pci", parseIntOrNull(p.optString("PCI_5G")) ?: JSONObject.NULL)
-        o.put("nrarfcn", parseIntOrNull(p.optString("FREQ_5G")) ?: JSONObject.NULL)
-        val sig = JSONObject()
-        sig.put("ssRsrp", parseIntOrNull(p.optString("RSRP_5G")) ?: JSONObject.NULL)
-        sig.put("ssRsrq", parseIntOrNull(p.optString("RSRQ_5G")) ?: JSONObject.NULL)
-        sig.put("ssSinr", sinr5g ?: JSONObject.NULL)
-        sig.put("csiRsrp", JSONObject.NULL)
-        sig.put("csiRsrq", JSONObject.NULL)
-        sig.put("csiSinr", JSONObject.NULL)
-        sig.put("level", parseIntOrNull(p.optString("signal_lvl")) ?: JSONObject.NULL)
-        o.put("signal", sig)
-        return o
+        val lvl  = parseIntOrNull(p.optString("signal_lvl"))
+
+        val out = mutableListOf<JSONObject>()
+        for (i in 0 until n) {
+            val isPrimary = i == 0
+            val o = JSONObject()
+            o.put("rat", "NR")
+            o.put("isRegistered", isPrimary)
+            o.put("mcc", mcc ?: JSONObject.NULL)
+            o.put("mnc", mnc ?: JSONObject.NULL)
+            o.put("plmn", if (plmn.isNotEmpty()) plmn else JSONObject.NULL)
+            o.put("tac", (if (isPrimary) tac else null) ?: JSONObject.NULL)
+            o.put("nci", (if (isPrimary) nci else null) ?: JSONObject.NULL)
+            o.put("pci", pciList.getOrNull(i)?.toIntOrNull() ?: JSONObject.NULL)
+            o.put("nrarfcn", freqList.getOrNull(i)?.toIntOrNull() ?: JSONObject.NULL)
+            val sig = JSONObject()
+            sig.put("ssRsrp", (if (isPrimary) rsrp else null) ?: JSONObject.NULL)
+            sig.put("ssRsrq", (if (isPrimary) rsrq else null) ?: JSONObject.NULL)
+            sig.put("ssSinr", (if (isPrimary) sinr else null) ?: JSONObject.NULL)
+            sig.put("csiRsrp", JSONObject.NULL)
+            sig.put("csiRsrq", JSONObject.NULL)
+            sig.put("csiSinr", JSONObject.NULL)
+            sig.put("level", lvl ?: JSONObject.NULL)
+            o.put("signal", sig)
+            out.add(o)
+        }
+        return out
     }
 
     private fun errorJson(message: String): String =
@@ -364,22 +412,20 @@ class OduScanner(private val appContext: Context? = null) {
     companion object {
         private const val TAG = "OduScanner"
         private const val SUB_ODU = 10001
-        const val CMD_SERVING_CELL = "f3e328b1-c743-4aaf-be88-fdb5e32d7e51"
-        const val CMD_LOOP_DATA   = "2ee26212-96cc-45d3-8f0d-808e4cde884a"
+        // Serving-cell detail (cmd 1002) on firmware X17U-NG0002 1.0.07.
+        const val CMD_SERVING_CELL = "89af35c9-b448-4fc7-a477-828a3e9467f8"
+        // Polling status (cmd 1009) with signal + uptime + temp.
+        const val CMD_LOOP_DATA   = "f3e328b1-c743-4aaf-be88-fdb5e32d7e51"
         const val CMD_CHALLENGE   = "3830c61a-620d-47da-ae47-33d8401401c4"
         const val CMD_LOGIN       = "d2aa9843-494b-4947-9621-a46ec652ecd9"
 
-        // Probe set: every UUID discovered in the SPA bundles that returns
-        // data (not login / challenge / logout). We call them all on each
-        // scan and merge the fields.
+        // Probe set used by scanOnce() to maximise field coverage. The
+        // serving-cell endpoint goes first so its values win on merge.
         val PROBE_CMDS: List<Pair<String, String>> = listOf(
+            "Ka"            to "89af35c9-b448-4fc7-a477-828a3e9467f8",
             "Ya"            to "f3e328b1-c743-4aaf-be88-fdb5e32d7e51",
             "getLoopData"   to "2ee26212-96cc-45d3-8f0d-808e4cde884a",
-            "getInitData"   to "9f2861ee-baf8-4038-bab6-774ad4e930b0",
             "getDeviceInfo" to "ece6b6d4-61c7-4dad-af23-c8249c75c58c",
-            "getConfigData" to "55f29f9b-20cd-4d72-ab20-63ba0b4d2a7a",
-            "Ka"            to "89af35c9-b448-4fc7-a477-828a3e9467f8",
-            "Za"            to "5332f5ee-5be9-4843-b85f-1b251aa5f4ff",
         )
 
         fun sha256Hex(s: String): String {
@@ -414,5 +460,8 @@ class OduScanner(private val appContext: Context? = null) {
             }
             return false
         }
+        /** Split "a+b+c" into ["a","b","c"], dropping empty entries. */
+        fun splitPlus(s: String?): List<String> =
+            s?.split('+')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
     }
 }
